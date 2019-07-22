@@ -1,0 +1,97 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: canaryns
+  labels:
+    istio-injection: enabled
+    appmesh.k8s.aws/sidecarInjectorWebhook: enabled
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sinfo
+  namespace: canaryns
+  labels:
+    app: sinfo
+spec:
+  ports:
+    - port: 8080
+      name: http
+  selector:
+    app: sinfo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sinfo
+  namespace: canaryns
+  labels:
+    app: sinfo
+    version: v1
+spec:
+  minReadySeconds: 5
+  revisionHistoryLimit: 5
+  progressDeadlineSeconds: 60
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: sinfo
+      version: v1
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+      labels:
+        app: sinfo
+        version: v1
+    spec:
+      containers:
+        - name: sinfod
+          image: registry.cn-shanghai.aliyuncs.com/shawn_repo/istio-flagger:1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            timeoutSeconds: 5
+          resources:
+            limits:
+              cpu: 2000m
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 64Mi
+
+
+---
+apiVersion: autoscaling/v2beta1
+kind: HorizontalPodAutoscaler
+metadata:
+  name: sinfo
+  namespace: canaryns
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: sinfo
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        # scale up if usage is above
+        # 99% of the requested CPU (100m)
+        targetAverageUtilization: 99
